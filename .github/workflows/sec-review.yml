@@ -1,0 +1,41 @@
+name: SecReviewer
+
+on:
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  security-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm install -g @sylphai/adal-cli
+      - name: Run SecReviewer
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+          [ -s pr.diff ] || exit 0
+          cat pr.diff | adal -q "Senior security engineer reviewing this diff. \
+            Find: SQL/XSS/command injection, path traversal, hardcoded secrets, \
+            auth flaws, crypto weaknesses. Output Markdown with Critical Issues, \
+            Warnings, Suggestions, Human Review Needed (YES/NO), Learn More." \
+            --yolo > review.md
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const review = fs.existsSync('review.md')
+              ? fs.readFileSync('review.md', 'utf8') : '_No review._';
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `# 🛡️ SecReviewer Report\n\n${review}\n\n---\n_Powered by AdaL_`
+            });
